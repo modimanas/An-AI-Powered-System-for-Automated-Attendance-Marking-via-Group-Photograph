@@ -1,0 +1,15 @@
+# Database files
+*.db
+*.sqlite3
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Environment folders (if you use one)
+venv/
+env/
+
+# IDE specific files
+.vscode/
+.idea/

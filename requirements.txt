@@ -1,0 +1,13 @@
+streamlit
+ultralytics
+onnxruntime
+opencv-python-headless
+Pillow
+numpy
+pandas
+streamlit-webrtc
+pymongo
+sqlalchemy
+psycopg2-binary
+requests
+gdown
