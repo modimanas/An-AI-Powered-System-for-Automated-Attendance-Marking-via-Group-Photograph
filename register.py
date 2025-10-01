@@ -56,7 +56,7 @@ def load_models():
     """
     # Configuration for models
     YOLO_MODEL_FILENAME = "yolov8m-face-lindevs.pt"
-    # Yahan aapka naya link daala hai
+    # Yahan aapk a naya link daala hai
     YOLO_MODEL_URL = "https://huggingface.co/manas06/student-attendance-models/resolve/main/yolov8m-face-lindevs.pt" 
 
     ONNX_MODEL_FILENAME = "glintr100.onnx"
@@ -137,10 +137,12 @@ if 'stage' not in st.session_state:
     st.session_state.student_info = {}
     st.session_state.captured_images = []
     st.session_state.capture_instructions = [
-        "Look STRAIGHT and click Capture",
-        "Turn your face slightly LEFT and click Capture",
-        "Turn your face slightly RIGHT and click Capture",
-        "Look slightly UP and click Capture"
+        "Pose 1: Look STRAIGHT (Neutral Face)",
+        "Pose 2: Look STRAIGHT (Natural Smile)",
+        "Pose 3: Turn your face slightly LEFT",
+        "Pose 4: Turn your face slightly RIGHT",
+        "Pose 5: Look slightly UP",
+        "Pose 6: Look slightly DOWN"
     ]
 
 # --- STREAMLIT APP UI ---
@@ -171,8 +173,8 @@ elif st.session_state.stage == "capture":
 
     num_captured = len(st.session_state.captured_images)
 
-    if num_captured < 4:
-        st.info(f"Pose {num_captured + 1}/4: **{st.session_state.capture_instructions[num_captured]}**")
+    if num_captured < 6:
+        st.info(f"Pose {num_captured + 1}/6: **{st.session_state.capture_instructions[num_captured]}**")
 
         captured_image = st.camera_input("Click here to capture the photo", key=f"photo_capture_{num_captured}")
 
@@ -188,15 +190,23 @@ elif st.session_state.stage == "capture":
 # STAGE 4: Process Photos
 elif st.session_state.stage == "process":
     st.header("Step 3: Processing Photos")
-    st.success("All 4 photos captured successfully!")
+    st.success("All 6 photos captured successfully!")
 
-    cols = st.columns(4)
+    st.write("Your captured photos:")
+    cols_row1 = st.columns(3)
+    cols_row2 = st.columns(3)
     for i, image in enumerate(st.session_state.captured_images):
-        with cols[i]:
-            st.image(cv2.cvtColor(image, cv2.COLOR_BGR2RGB), caption=f"Pose {i+1}", use_column_width=True)
+         if i < 3:
+            # Pehli 3 photos pehli row mein
+            with cols_row1[i]:
+                st.image(cv2.cvtColor(image, cv2.COLOR_BGR2RGB), caption=f"Pose {i+1}", use_column_width=True)
+         else:
+            # Baaki ki 3 photos doosri row mein
+            with cols_row2[i - 3]:
+                st.image(cv2.cvtColor(image, cv2.COLOR_BGR2RGB), caption=f"Pose {i+1}", use_column_width=True)
 
     if st.button("Process Photos and Check Faces"):
-        embeddings = []
+        all_embeddings = []
         processed_images_with_boxes = []
 
         with st.spinner("Analyzing photos and generating embeddings..."):
@@ -207,11 +217,16 @@ elif st.session_state.stage == "process":
                     st.error(f"Could not detect a single face in Photo {i+1}. Please start over.")
                     all_faces_detected = False
                     break
-                embeddings.append(embedding)
+                all_embeddings.append(embedding)
                 processed_images_with_boxes.append(processed_image)
         
         if all_faces_detected:
-            st.session_state.embeddings = embeddings
+            # st.session_state.embeddings = embeddings
+            embeddings_array = np.array(all_embeddings)
+            master_embedding = np.mean(embeddings_array, axis=0)
+            st.success("✅ Master Embedding Profile Created Successfully!")
+
+            st.session_state.master_embedding = master_embedding.tolist() # .tolist() zaroori hai
             st.session_state.processed_images = processed_images_with_boxes
             st.session_state.stage = "confirm"
             st.rerun()
@@ -227,10 +242,18 @@ elif st.session_state.stage == "confirm":
     st.info("Please check if the faces were detected correctly in your photos.")
 
     st.subheader("YOLO Face Detection Result:")
-    cols_processed = st.columns(4)
+    cols_row1 = st.columns(3)
+    cols_row2 = st.columns(3)    
     for i, image in enumerate(st.session_state.processed_images):
-        with cols_processed[i]:
-            st.image(image, caption=f"Detected Face {i+1}", use_column_width=True)
+        if i < 3:
+            # Pehli 3 photos pehli row mein
+            with cols_row1[i]:
+                st.image(image, caption=f"Detected Face {i+1}", use_column_width=True)
+        else:
+            # Baaki ki 3 photos doosri row mein
+            with cols_row2[i - 3]:
+                st.image(image, caption=f"Detected Face {i+1}", use_column_width=True)
+    
 
     st.write("---")
 
@@ -244,7 +267,7 @@ elif st.session_state.stage == "confirm":
                 "roll_no": st.session_state.student_info['roll_no'],
                 "branch": st.session_state.student_info['branch'],
                 "section": st.session_state.student_info['section'],
-                "embeddings": st.session_state.embeddings
+                "master_embeddings": st.session_state.master_embedding
             }
             try:
                 with st.spinner("Saving data to database..."):
