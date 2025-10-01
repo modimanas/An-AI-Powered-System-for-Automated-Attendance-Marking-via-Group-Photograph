@@ -1,14 +1,37 @@
 import streamlit as st
+import streamlit as st
 
-# Hide Streamlit default footer & GitHub link
-hide_footer = """
+# ---- Custom header ----
+st.markdown(
+    """
+    <h2 style='text-align: center; color: #4CAF50;'>
+        Manas Modi
+    </h2>
+    """,
+    unsafe_allow_html=True
+)
+
+# ---- CSS to modify footer ----
+custom_css = """
 <style>
-#MainMenu {visibility: hidden;}
-footer {visibility: hidden;}
-header {visibility: hidden;}
+/* Hide "View source on GitHub" completely */
+a[href*="github.com"] {
+    visibility: hidden;
+}
+
+/* Keep Streamlit icon but disable the link */
+footer a {
+    pointer-events: none;   /* disables click */
+    text-decoration: none;
+}
+
+/* Optional: center footer icon */
+footer {
+    text-align: center;
+}
 </style>
 """
-st.markdown(hide_footer, unsafe_allow_html=True)
+st.markdown(custom_css, unsafe_allow_html=True)
 
 import cv2
 import numpy as np
