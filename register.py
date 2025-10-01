@@ -1,4 +1,15 @@
 import streamlit as st
+
+# Hide Streamlit default footer & GitHub link
+hide_footer = """
+<style>
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+header {visibility: hidden;}
+</style>
+"""
+st.markdown(hide_footer, unsafe_allow_html=True)
+
 import cv2
 import numpy as np
 import os
