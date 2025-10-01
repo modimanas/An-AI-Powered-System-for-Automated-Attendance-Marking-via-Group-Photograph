@@ -653,91 +653,106 @@
 #             del st.session_state[key]
 #         st.rerun()
 
-
 import streamlit as st
 import cv2
 import numpy as np
 import os
-import json
+import requests  # <-- Yeh import zaroori hai
+import av  # <-- Yeh import streamlit_webrtc ke liye zaroori hai
 from ultralytics import YOLO
 import onnxruntime as ort
 from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
-import threading
-import time
 from pymongo import MongoClient
 
 # --- CONFIGURATION ---
-MONGO_URI = "mongodb+srv://manasmodi603_db_user:YatfzxpDTUrF2IFR@cluster0.7gdy0eb.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"  # <-- Replace with your Mongo URI
+MONGO_URI = "mongodb+srv://manasmodi603_db_user:YatfzxpDTUrF2IFR@cluster0.7gdy0eb.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 YOLO_MODEL_PATH = "yolov8m-face-lindevs.pt"
-ARCFACE_MODEL_PATH = "glintr100.onnx"
+ONNX_MODEL_FILENAME = "glintr100.onnx"
+# Sahi direct download link
+ONNX_MODEL_URL = "https://huggingface.co/FrancisRing/StableAnimator/resolve/main/models/antelopev2/glintr100.onnx"
 
 # --- MONGODB CONNECTION ---
-client = MongoClient(MONGO_URI)
-db = client["student_attendance_db"]
-students_collection = db["students"]
+@st.cache_resource
+def get_mongo_client():
+    client = MongoClient(MONGO_URI)
+    return client
+
+try:
+    client = get_mongo_client()
+    db = client["student_attendance_db"]
+    students_collection = db["students"]
+except Exception as e:
+    st.error(f"Failed to connect to MongoDB: {e}")
+    st.stop()
+
 
 # --- MODEL LOADING (Ek hi baar load hoga) ---
 @st.cache_resource
 def load_models():
+    """
+    Downloads the ONNX model from Hugging Face if not present,
+    then loads all required models.
+    """
+    # Step 1: ONNX model download karein agar मौजूद nahi hai
+    if not os.path.exists(ONNX_MODEL_FILENAME):
+        try:
+            with st.spinner(f"Downloading face recognition model ({ONNX_MODEL_FILENAME})..."):
+                response = requests.get(ONNX_MODEL_URL, stream=True)
+                response.raise_for_status()  # Check for download errors
+                with open(ONNX_MODEL_FILENAME, "wb") as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+        except Exception as e:
+            st.error(f"Model download failed: {e}")
+            return None, None, None # Models load nahi hue
+
+    # Step 2: Saare models ko load karein
     try:
-        yolo_detector = YOLO(YOLO_MODEL_PATH)
-        arcface_session = ort.InferenceSession(ARCFACE_MODEL_PATH, providers=['CPUExecutionProvider'])
-        haar_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+        with st.spinner("Loading AI models..."):
+            yolo_detector = YOLO(YOLO_MODEL_PATH)
+            arcface_session = ort.InferenceSession(ONNX_MODEL_FILENAME, providers=['CPUExecutionProvider'])
+            haar_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+        st.success("Models loaded successfully!")
         return yolo_detector, arcface_session, haar_cascade
     except Exception as e:
         st.error(f"Error loading models: {e}")
-        st.stop()
+        return None, None, None
 
+# Models ko load karein
 yolo_detector, arcface_session, haar_cascade = load_models()
+
+# Agar model load na ho toh app rok dein
+if not all([yolo_detector, arcface_session, haar_cascade]):
+    st.error("A critical error occurred during model loading. The app cannot continue.")
+    st.stop()
+
 
 # --- HELPER FUNCTIONS ---
 def generate_embedding_and_get_image(image):
     """YOLO se face detect karta hai, box banata hai, aur ArcFace se embedding generate karta hai."""
     img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     results = yolo_detector(img_rgb, verbose=False)
-    
+
     if len(results[0].boxes) != 1:
         return None, None
 
     box = results[0].boxes[0]
     x1, y1, x2, y2 = map(int, box.xyxy[0])
-    
+
     image_with_box = img_rgb.copy()
     cv2.rectangle(image_with_box, (x1, y1), (x2, y2), (0, 255, 0), 2)
-    
+
     face = img_rgb[y1:y2, x1:x2]
-    
+
     # ArcFace pre-processing
     face = cv2.resize(face, (112, 112))
     face = face.astype(np.float32) / 255.0
     face = np.transpose(face, (2, 0, 1))
     input_tensor = np.expand_dims(face, axis=0)
-    
+
     inputs = {arcface_session.get_inputs()[0].name: input_tensor}
     embedding = arcface_session.run(None, inputs)[0].flatten()
     return embedding.tolist(), image_with_box
-
-# --- VIDEO PROCESSOR FOR GUIDANCE ---
-class GuidedVideoProcessor(VideoTransformerBase):
-    def recv(self, frame: "av.VideoFrame") -> "av.VideoFrame":
-        img = frame.to_ndarray(format="bgr24")
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        faces = haar_cascade.detectMultiScale(gray, 1.1, 4)
-        
-        h, w, _ = img.shape
-        center_x, center_y = w // 2, h // 2
-        oval_w, oval_h = w // 3, h // 2
-        
-        border_color = (255, 255, 255) # White
-        if len(faces) == 1:
-            x, y, fw, fh = faces[0]
-            face_center_x = x + fw // 2
-            face_center_y = y + fh // 2
-            if (abs(face_center_x - center_x) < 30 and abs(face_center_y - center_y) < 40):
-                border_color = (0, 255, 0) # Green
-        
-        cv2.ellipse(img, (center_x, center_y), (oval_w, oval_h), 0, 0, 360, border_color, 3)
-        return av.VideoFrame.from_ndarray(img, format="bgr24")
 
 # --- SESSION STATE INITIALIZATION ---
 if 'stage' not in st.session_state:
@@ -757,7 +772,7 @@ st.title("🎓 Student Registration Portal")
 # STAGE 1 & 2: Get Student Details
 if st.session_state.stage == "details":
     st.header("Step 1: Enter Your Details")
-    
+
     branch = st.selectbox("Select Branch", ["CSIT", "CSE"])
     section = st.selectbox("Select Section", ["A", "B", "C", "D"])
     name = st.text_input("Enter Student Name")
@@ -776,14 +791,14 @@ if st.session_state.stage == "details":
 # STAGE 3: Guided Photo Capture
 elif st.session_state.stage == "capture":
     st.header("Step 2: Capture Your Photos")
-    
+
     num_captured = len(st.session_state.captured_images)
-    
+
     if num_captured < 4:
         st.info(f"Pose {num_captured + 1}/4: **{st.session_state.capture_instructions[num_captured]}**")
-        
+
         captured_image = st.camera_input("Click here to capture the photo", key=f"photo_capture_{num_captured}")
-        
+
         if captured_image is not None:
             file_bytes = np.asarray(bytearray(captured_image.read()), dtype=np.uint8)
             img = cv2.imdecode(file_bytes, 1)
@@ -797,43 +812,51 @@ elif st.session_state.stage == "capture":
 elif st.session_state.stage == "process":
     st.header("Step 3: Processing Photos")
     st.success("All 4 photos captured successfully!")
-    
+
     cols = st.columns(4)
     for i, image in enumerate(st.session_state.captured_images):
         with cols[i]:
             st.image(cv2.cvtColor(image, cv2.COLOR_BGR2RGB), caption=f"Pose {i+1}", use_column_width=True)
-            
+
     if st.button("Process Photos and Check Faces"):
         embeddings = []
         processed_images_with_boxes = []
-        
+
         with st.spinner("Analyzing photos and generating embeddings..."):
-            for img in st.session_state.captured_images:
+            all_faces_detected = True
+            for i, img in enumerate(st.session_state.captured_images):
                 embedding, processed_image = generate_embedding_and_get_image(img)
                 if embedding is None:
-                    st.error(f"Could not detect a single face in one of the photos. Please start over.")
-                    st.stop()
+                    st.error(f"Could not detect a single face in Photo {i+1}. Please start over.")
+                    all_faces_detected = False
+                    break
                 embeddings.append(embedding)
                 processed_images_with_boxes.append(processed_image)
         
-        st.session_state.embeddings = embeddings
-        st.session_state.processed_images = processed_images_with_boxes
-        st.session_state.stage = "confirm"
-        st.rerun()
+        if all_faces_detected:
+            st.session_state.embeddings = embeddings
+            st.session_state.processed_images = processed_images_with_boxes
+            st.session_state.stage = "confirm"
+            st.rerun()
+        else:
+            # Optionally reset to capture stage
+            st.session_state.stage = "capture"
+            st.session_state.captured_images = []
+
 
 # STAGE 5: Confirm and Save
 elif st.session_state.stage == "confirm":
     st.header("Step 4: Confirm and Save")
     st.info("Please check if the faces were detected correctly in your photos.")
-    
+
     st.subheader("YOLO Face Detection Result:")
     cols_processed = st.columns(4)
     for i, image in enumerate(st.session_state.processed_images):
         with cols_processed[i]:
             st.image(image, caption=f"Detected Face {i+1}", use_column_width=True)
-    
+
     st.write("---")
-    
+
     col1, col2 = st.columns(2)
     with col1:
         if st.button("✅ Looks Good! Save My Registration"):
@@ -847,11 +870,12 @@ elif st.session_state.stage == "confirm":
                 "embeddings": st.session_state.embeddings
             }
             try:
-                students_collection.update_one(
-                    {"roll_no": st.session_state.student_info['roll_no']},
-                    {"$set": student_doc},
-                    upsert=True
-                )
+                with st.spinner("Saving data to database..."):
+                    students_collection.update_one(
+                        {"roll_no": st.session_state.student_info['roll_no']},
+                        {"$set": student_doc},
+                        upsert=True
+                    )
                 st.session_state.stage = "complete"
                 st.rerun()
             except Exception as e:
@@ -859,6 +883,7 @@ elif st.session_state.stage == "confirm":
 
     with col2:
         if st.button("❌ No, Start Over"):
+            # Clear session state to reset the app
             for key in list(st.session_state.keys()):
                 del st.session_state[key]
             st.rerun()
